@@ -4,13 +4,12 @@
 // Cart variables
 var cart_follow=false;
 
-
 // server variables
 
 var net = require('net');
 var server = undefined;
-var server_ip = '127.0.0.1';
-var server_port = 0; // normally 3490
+var server_ip = '52.24.244.202';
+var server_port = 8080; // normally 3490
 var client = undefined;
 var client_ip = '';
 var client_port = 0;
@@ -20,33 +19,49 @@ var client_port = 0;
 
 function server_init() {
 	if (server_port != 0) {
-		// Create a server instance, and chain the listen function to it
-		// The function passed to net.createServer() becomes the event handler for the 'connection' event
-		// The sock object the callback function receives UNIQUE for each connection
+
+		// Create a server instance, and chain
+		// the listen function to it
+		// The function passed to net.createServer()
+		// becomes the event handler for the
+		// 'connection' event.  The sock object the
+		// callback function receives UNIQUE for
+		// each connection
+
 		server = net.createServer(function(sock) {
 
-			// We have a connection - a socket object is assigned to the connection automatically
-			console.log('Cloud Server CONNECTED: ' + sock.remoteAddress +':'+ sock.remotePort);
+			// We have a connection - a socket object
+			// is assigned to the connection
+			// automatically
 
-			// Add a 'data' event handler to this instance of socket
+			console.log('CONNECTED: ' +
+			  sock.remoteAddress +':'+ sock.remotePort);
+
+			// Add a 'data' event handler to this
+			// instance of socket
+
 			sock.on('data', function(data) {
 				sock.write(cart_server_receiver(sock,data));
 			});
 
-			// Add a 'close' event handler to this instance of socket
+			// Add a 'close' event handler to this
+			// instance of socket
+
 			sock.on('close', function(data) {
-				console.log('Cloud Server CLOSED: ');
+				console.log('CLOSED: ');
 			});
 
 		}).listen(server_port, server_ip);
-		console.log('Cloud Server listening on:' + server_ip +':'+ server_port);
+		console.log('LISTENING on:' +
+		      server_ip +':'+ server_port);
 	}
 }
 
 function cart_server_receiver(sock,data) {
-	console.log('Cloud Server RECEIVE(' + sock.remoteAddress + ')=' + data);
+	console.log('RECEIVED(' +
+	   sock.remoteAddress + ')=' + data);
 	data=String(data);
-	
+
 	var reply='';
 	// process the cloud client requests
 	if (data == "cart_status:follow=on;") {
@@ -63,14 +78,14 @@ function cart_server_receiver(sock,data) {
 		// TBD
 		reply='no_command:status=nak,message=' + data + ';';
 	}
-	
+
 	console.log('Cloud Server SEND(' + reply);
 	return reply;
 }
 
 function fetch_UCP(upc_number) {
 	console.log('fetch_UCP:' + upc_number);
-	
+
 	var reply = "re_upc_lookup:status=nak,message=not found";
 	if (upc_number == '760557824961') // microSD
 		reply = "re_upc_lookup:price=7.45,weight=0.2;";
@@ -121,8 +136,8 @@ function cloud_client_receiver(data) {
 	} else if (data == "re_cart_status:follow=off;") {
 		cart_follow=false;
 	}
-	
-	// now display menu		
+
+	// now display menu
 	client_commands();
 }
 
@@ -170,7 +185,7 @@ function client_commands() {
 
 function config_cmnd(key) {
 	var message="";
-	
+
 	if (key == '1')
 		cloud_client_sender("cart_status:follow=on;");
 	if (key == '2')
@@ -191,14 +206,14 @@ function config_cmnd(key) {
 	// ctrl-c ( end of text )
 	if ( key === '\u0003' )
 		process.exit();
-	if (key == 'q') 
+	if (key == 'q')
 		process.exit();
 
 	if (message == "") {
 		cloud_client_sender(message);
-		// postpone menu until client reply		
+		// postpone menu until client reply
 	} else {
-		// display menu (if we get here)		
+		// display menu (if we get here)
 		client_commands();
 	}
 
