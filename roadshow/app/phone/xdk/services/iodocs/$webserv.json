@@ -1,0 +1,67 @@
+{
+"endpoints": [
+  {
+    "name": "Resource Group A",
+    "dashboardUrl": "http://developer.example.api/resourceGroupA",
+    "methods": [
+      {
+        "MethodName": "methodA1",
+        "Synopsis": "Grabs information from the A1 data set"
+      },
+      {
+        "MethodName": "methodA1User",
+        "Synopsis": "Grabs information from the A1 data set for a specific user",
+        "parameters": [
+          {
+            "Name": "param_1_name",
+            "Required": "Y",
+            "Default": "",
+            "Type": "string",
+            "Description": "Description of the first parameter."
+          },
+          {
+            "Name": "userId",
+            "Required": "Y",
+            "Default": "",
+            "Type": "string",
+            "Description": "The userId parameter that is in the URI."
+          }
+        ]
+      },
+      {
+        "MethodName": "methodA1Authenticate",
+        "Synopsis": "This is a bare-boned implementation of basic OAuth 2 authentication.  We suggest you hook this method up to your login button. Depending on the service, other parameters may be necessary.",
+        "parameters": [
+          {
+            "Name": "response_type",
+            "Required": "Y",
+            "Default": "code",
+            "Type": "string",
+            "Description": "code for authentication code, token for implicit"
+          },
+          {
+            "Name": "redirect_uri",
+            "Required": "Y",
+            "Default": "http://127.0.0.1:58889/http-services/api-explorer/iodocs/oauth2Callback",
+            "Type": "string",
+            "Description": "The redirect_uri must match the redirect uri in your app settings on the API website. You must use the localhost/127.0.0.1 url provided for the services tab or else your service won't work, but you are free to use whatever url you want after that."
+          }
+        ]
+      },
+      {
+        "MethodName": "authenticatedMethodA1",
+        "Synopsis": "A function call that requires an access token acquired from first authenticating the service",
+        "parameters": [
+          {
+            "Name": "param_1_name",
+            "Required": "Y",
+            "Default": "",
+            "Type": "string",
+            "Description": "Description of the first parameter."
+          }
+        ]
+      }
+    ]
+  }
+]
+}

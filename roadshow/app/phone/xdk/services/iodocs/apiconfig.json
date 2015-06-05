@@ -1,0 +1,12 @@
+{
+  "$webserv": {
+    "name": "Lower Case API",
+    "description": "A great API",
+    "dashboardUrl": "http://developer.example.api",
+    "auth": "key",
+    "requiredLibraries": [
+      "http://example.api/example-api.js"
+    ],
+    "signature": "apiSecret"
+  }
+}
