@@ -9,7 +9,7 @@ var cart_follow=false;
 var net = require('net');
 var server = undefined;
 var server_ip = '52.24.244.202';
-var server_port = 0; // normally 3490
+var server_port = 8080; // normally 3490
 var client = undefined;
 var client_ip = '';
 var client_port = 0;
@@ -34,8 +34,7 @@ function server_init() {
 			// is assigned to the connection
 			// automatically
 
-			console.log('CONNECTED: ' +
-			  sock.remoteAddress +':'+ sock.remotePort);
+			console.log('CONNECTED: ' + sock.remoteAddress +':'+ sock.remotePort);
 
 			// Add a 'data' event handler to this
 			// instance of socket
@@ -52,14 +51,12 @@ function server_init() {
 			});
 
 		}).listen(server_port, server_ip);
-		console.log('LISTENING on:' +
-		      server_ip +':'+ server_port);
+		console.log('LISTENING on:' + server_ip +':'+ server_port);
 	}
 }
 
 function cart_server_receiver(sock,data) {
-	console.log('RECEIVED(' +
-	   sock.remoteAddress + ')=' + data);
+	console.log('RECEIVED(' + sock.remoteAddress + ')=' + data);
 	data=String(data);
 
 	var reply='';
