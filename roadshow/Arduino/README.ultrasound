@@ -1,0 +1,15 @@
+Debugging:
++ check battery holder on transmitter, LED should not blink but remains
+steady
++ transmitter sometimes lock on 50Khz instead of 40Khz. Symptom is that
+receiver gets very low signal (0.X Volts instead of 3-4V). Check with
+multimeter on receiver side. Restart transmitter if this is the case.
++ always plug battery in the center of the board connector, as it is
+2GND+2VIN, short-circuit is easy to do if pluggin in on rightmost/leftmost
+pins.
+
+Test pins:
++ transmitter: right pin/pin 4 of battery connector (head of transmitter
+opposite of you) is GND, 5V is pin left of transmitter head.
++ receiver: head facing away from you, GND is left test pin, right is
+VIN.
