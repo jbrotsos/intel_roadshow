@@ -79,6 +79,8 @@ var verbose       = true;
 var disp_weight = 0.0;
 var disp_cost = 0.0;
 
+var cur_direction_string = "";
+
 // external values
 
 var beeper="Off";
@@ -682,6 +684,13 @@ function S_Follow_Start_enter() {
 	return false;
 }
 
+function S_Follow_Sensor_loop() {
+	state = find_state('S_Follow_Weight');
+	state_array[state].display_1=cur_direction_string;
+	disp_state(next_state);
+	return true; 
+}
+
 function S_Follow_Stop_enter() {
 	set_led('off');
 	set_mood("MOOD_READY");
@@ -949,7 +958,7 @@ state_array.push(new StateGUI('S_Follow_Weight',0,
  'Cart  123.45 lb ',
  'Stop  Scan  Help',
  'S_FollowStop','S_ScanReady','S_HelpSend','S_Follow_Price', 
- S_Follow_Weight_enter,No_State,No_State));
+ S_Follow_Weight_enter,S_Follow_Sensor_loop,No_State));
 
 state_array.push(new StateGUI('S_Follow_Price',0,
  'Cart    $123.45 ',
@@ -1370,8 +1379,39 @@ function run_init() {
 			var distanceSensor = new DistanceSensor(0,1);
 			setInterval(function()
 			{
-				distanceSensor.distance();
-				distanceSensor.spread();
+				var distance = distanceSensor.distance();
+				var spread = distanceSensor.spread();
+				//console.log("Motor control (" + distance + ", " + spread + "):");
+				if( -10 < spread && spread < 10 &&
+					-50 < distance && distance < 50 )
+				{
+					cur_direction_string = "Waiting . . . . ";
+					return;
+				}
+				if( spread < -100 )
+				{
+					cur_direction_string = "Left    ";
+				}
+				else if( spread > 100 )
+				{
+					cur_direction_string = "Right   ";
+				}
+				else
+				{
+					cur_direction_string = "Straight";
+				}
+				if( distance > 1200 )
+				{
+					cur_direction_string += " stop.  ";
+				}
+				else if( distance > 600 )
+				{
+					cur_direction_string += " slow.  ";
+				}
+				else
+				{
+					cur_direction_string += " fast.  ";
+				}
 			}, 1000);
 		});
 	} else {
