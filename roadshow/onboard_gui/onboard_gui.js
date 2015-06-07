@@ -18,7 +18,7 @@
 //   * Wifi connection for Cloud service
 //
 // Usage:
-//  $ node onboard_gui.js [parameters]
+//  $ node onboard_gui.js [-parameters] [--server=port] [--client=ip:port]
 //
 // The application normally comes up in setup mode, where you can set
 // which devices are enabled. By default it starts in pure simulation.
@@ -34,7 +34,7 @@
 ///////////////////////////////////////////////
 // Port Assignments
 
-var BUTTON_1_PORT=3
+var BUTTON_1_PORT=6
 var BUTTON_2_PORT=4
 var BUTTON_3_PORT=7
 var BUTTON_4_PORT=8
@@ -57,6 +57,10 @@ var lcd = undefined;
 var led1 = undefined;
 var upmBuzzer = undefined;
 var buzzer = undefined;
+var analog1 = undefined;
+var analog2 = undefined;
+var analog3 = undefined;
+var analog4 = undefined;
 
 // state variables
 
@@ -73,7 +77,7 @@ var enable_board=false;
 var verbose       = true;
 
 var disp_weight = 0.0;
-var disp_cost = 7.49;
+var disp_cost = 0.0;
 
 // external values
 
@@ -81,7 +85,13 @@ var beeper="Off";
 var motorL="Off";
 var motorR="Off";
 
+var a1=0;
+var a2=0;
+var a3=0;
+var a4=0;
+
 var scanner_input="";
+var upc_name=undefined;
 var upc_number = "";
 var upc_price=0.0;
 var upc_weight=0.0;
@@ -89,8 +99,12 @@ var upc_weight=0.0;
 // server
 
 var net = require('net');
-var HOST = '127.0.0.1';
-var PORT = 3490;
+var server = undefined;
+var server_ip = '127.0.0.1';
+var server_port = 3490;
+var client = undefined;
+var client_ip = '';
+var client_port = 0;
 
 // UPC Object Constructor
 
@@ -100,6 +114,68 @@ function UPC_Entry(upc,name,price,weight) {
 	this.price = price;
 	this.weight = weight;
 };
+
+
+// Distance Sensor Object Constructor
+
+function DistanceSensor(rightPin, leftPin) {
+    this.rightPin = new mraa.Aio(rightPin);
+    this.leftPin = new mraa.Aio(leftPin);
+    this.MAX_SAMPLES = 1024;
+    this.READ_RATE = 1; //1ms per read
+    this.counter = 0;
+    this.leftBuffer = new Array();
+    this.rightBuffer = new Array();
+    for(i = 0; i < this.MAX_SAMPLES; ++i) {
+        this.leftBuffer[i] = this.rightBuffer[i] = 0;
+    }
+
+    this.update = function(me) {
+        ++me.counter;
+        me.rightBuffer[me.counter % me.MAX_SAMPLES] = me.rightPin.read();
+        me.leftBuffer[me.counter % me.MAX_SAMPLES] = me.leftPin.read();
+    }
+    setInterval(this.update, this.READ_RATE, this);
+    this.distancehelper = function(buffer) {
+        //find the mean
+        var mean = 0;
+        for(i = 0; i < this.MAX_SAMPLES; ++i)
+            mean += buffer[i];
+        mean /= this.MAX_SAMPLES;
+        //subtract mean and square result - variance
+        //find mean of variances
+        var mean_of_variance = 0;
+        for(i = 0; i < this.MAX_SAMPLES; ++i)
+        {
+            var variance = (buffer[i] - mean) * (buffer[i] - mean);
+            mean_of_variance += variance;
+        }
+        mean_of_variance /= this.MAX_SAMPLES;
+        //sqrt mean of variances - stddev
+        var stddev = Math.sqrt(mean_of_variance);
+        //discard any sample that is not within 2 stddevs of mean and return mean of resulting set
+        var filteredMean = 0;
+        var filteredCount = 0;
+        for(i = 0; i < this.MAX_SAMPLES; ++i)
+        {
+            if( mean-(2*stddev) <= buffer[i] && buffer[i] <= mean+(2*stddev) )
+            {
+                //its a valid sample
+                filteredMean += buffer[i];
+                ++filteredCount;
+            }
+        }
+        if( filteredCount == 0 )
+            return 0;
+        return filteredMean / filteredCount;
+    }
+    this.distance = function() {
+        return this.distancehelper(this.rightBuffer) + this.distancehelper(this.leftBuffer);
+    }
+    this.spread = function() {
+        return this.distancehelper(this.rightBuffer) - this.distancehelper(this.leftBuffer);
+    }
+}
 
 ///////////////////////////////////////////////
 // Common routines
@@ -120,6 +196,14 @@ function format_float(f) {
 		s = "    0.00";
 	}
 	while (s.length < 8)
+		s = ' '+s;
+	return s;
+}
+
+// format integer to '%<n>d'
+function format_int(d,n) {
+	var s = String(Math.floor(d));
+	while (s.length < n)
 		s = ' '+s;
 	return s;
 }
@@ -188,11 +272,31 @@ function init_board() {
 			controller: "JHD1313M1"
 		});
 		// Set init text on screen
-		lcd.cursor(0, 0).print("FMC");
+		lcd.cursor(0, 0).print("Follow Me Cart");
 		lcd.cursor(1, 0).print("Init!");
+	    lcd.bgColor(76, 0, 130);
+
 
 		// LED #1 = Grove Shield GPIO jack
 		led1 = new five.Led(LED_1_PORT);
+		
+		// open up the four analog ports
+		analog1 = new five.Sensor("A0");
+		analog2 = new five.Sensor("A1");
+		analog3 = new five.Sensor("A2");
+		analog4 = new five.Sensor("A3");
+		analog1.scale(0, 255).on("change", function() {
+			a1 = this.value;
+		});
+		analog2.scale(0, 255).on("change", function() {
+			a2 = this.value;
+		});
+		analog3.scale(0, 255).on("change", function() {
+			a3 = this.value;
+		});
+		analog4.scale(0, 255).on("change", function() {
+			a4 = this.value;
+		});
 
 	}
 	
@@ -208,34 +312,12 @@ function init_board() {
 			buzzer = new upmBuzzer.Buzzer(BUZZER_1_PORT);
 		}
 	}
+}
 
-	if (enable_ipc == true) {
-
-		// Create a server instance, and chain the listen function to it
-		// The function passed to net.createServer() becomes the event handler for the 'connection' event
-		// The sock object the callback function receives UNIQUE for each connection
-		net.createServer(function(sock) {
-
-			// We have a connection - a socket object is assigned to the connection automatically
-			console.log('IPC CONNECTED: ' + sock.remoteAddress +':'+ sock.remotePort);
-
-			// Add a 'data' event handler to this instance of socket
-			sock.on('data', function(data) {
-				console.log('IPC DATA(' + sock.remoteAddress + ')=' + data);
-				// Write the data back to the socket, the client will receive it as data from the server
-				sock.write('You said "' + data + '"');
-			});
-
-			// Add a 'close' event handler to this instance of socket
-			sock.on('close', function(data) {
-				console.log('IPC CLOSED: ');
-			});
-
-		}).listen(PORT, HOST);
-		
-		console.log('IPC Server listening on ' + HOST +':'+ PORT);
+function set_lcd_backlight(r,g,b) {
+	if (enable_io == true) {
+	    lcd.bgColor(r, g, b);
 	}
-
 }
 
 function buzzer_stop() {
@@ -263,14 +345,14 @@ function play_buzzer(sound) {
 			// setTimeout(buzzer_stop,250);
 		}
 
-		if (sound == "SONG_FOLLOW_START") {
+		if (sound == "SONG_FOLLOWING") {
 			buzzer.on();
-			setTimeout(buzzer_stop,250);
+			setTimeout(buzzer_stop,100);
 		}
 
-		if (sound == "SONG_FOLLOW_STOP") {
+		if (sound == "SONG_WAITING") {
 			buzzer.on();
-			setTimeout(buzzer_stop,250);
+			setTimeout(buzzer_stop,100);
 		}
 
 		if (sound == "SONG_OK") {
@@ -280,7 +362,7 @@ function play_buzzer(sound) {
 
 		if (sound == "SONG_KEY_PRESS") {
 			buzzer.on();
-			setTimeout(buzzer_stop,20);
+			setTimeout(buzzer_stop,5);
 		}
 
 		if (sound == "SONG_HELP") {
@@ -306,12 +388,12 @@ function play_buzzer(sound) {
 			buzzer.playSound(upmBuzzer.DO, 100000);
 		}
 
-		if (sound == "SONG_FOLLOW_START") {
+		if (sound == "SONG_FOLLOWING") {
 			buzzer.playSound(upmBuzzer.DO, 100000);
 			buzzer.playSound(upmBuzzer.MI, 100000);
 		}
 
-		if (sound == "SONG_FOLLOW_STOP") {
+		if (sound == "SONG_WAITING") {
 			buzzer.playSound(upmBuzzer.MI, 100000);
 			buzzer.playSound(upmBuzzer.DO, 100000);
 		}
@@ -332,6 +414,32 @@ function play_buzzer(sound) {
 		}
 	}
 }
+
+var current_mood='';
+function set_mood(mood) {
+	if (current_mood == mood) {
+		return;
+	}
+	current_mood = mood;
+
+	if (mood == "MOOD_READY") {
+	    set_lcd_backlight(76, 0, 130);
+	    // no sound
+	}
+	if (mood == "MOOD_FOLLOW") {
+	    set_lcd_backlight(100, 255, 100);
+	    play_buzzer("SONG_FOLLOWING");
+	}
+	if (mood == "MOOD_LOOKING") {
+	    set_lcd_backlight(200, 200, 0);
+	    // no sound
+	}
+	if (mood == "MOOD_LOST") {
+	    set_lcd_backlight(250, 50, 50);
+	    play_buzzer("SONG_HELP");
+	}
+}
+
 
 function set_led(value) {
 	if (verbose)
@@ -364,94 +472,256 @@ function MotorR_control(control) {
 		motorR=control;
 }
 		
-//TBD
+var scanner_share_file='/tmp/barcode.txt';
+var fs = require('fs')
+var in_scanner_code=false;
 function scan_scanner() {
-	// no action yet
+	if (in_scanner_code) return;
+	in_scanner_code=true;
+	fs.stat(scanner_share_file, function(err, stat) {
+		if (err == null) {
+			fs.readFile(scanner_share_file, 'utf8', function (err,data) {
+				if (err) {
+				console.log(err);
+				} else {
+					fs.unlinkSync(scanner_share_file);
+					console.log("UPC_READ:"+data);
+					scanner_input=data;
+				}
+			});
+		} else {
+			// console.log('Some other error: ', err.code);
+		}
+	});
+	in_scanner_code=false;
 }
+
 			
-function fetch_UCP(upc_number) {
-	if (verbose)
-		console.log("fetch_UCP("+upc_number+")");
-	
-	upc=undefined;
-	if (!enable_cloud) {
-		if (upc_number == '760557824961') // microSD
-			upc = new UPC_Entry('760557824961','microSD',7.45,0.2);
-		if (upc_number == '941047822994') // ROM cherry chocolate
-			upc = new UPC_Entry('941047822994','ROM Cherry',2.21,0.3);
-		if (upc_number == '2839903352')   // GUM Toothbrush
-			upc = new UPC_Entry('2839903352','GUM Toothbrush',5.62,0.4);
-		if (upc_number == '7094212457')   // Gund plush penguin
-			upc = new UPC_Entry('7094212457','Gund plush penguin',12.88,0.77);
+///////////////////////////////////////////////
+// Cloud Handler Functions
+
+function init_ipc() {
+	if (enable_ipc == true) {
+
+		// Create a server instance, and chain the listen function to it
+		// The function passed to net.createServer() becomes the event handler for the 'connection' event
+		// The sock object the callback function receives UNIQUE for each connection
+		server = net.createServer(function(sock) {
+
+			// We have a connection - a socket object is assigned to the connection automatically
+			console.log('IPC:Cart Server CONNECTED: ' + sock.remoteAddress +':'+ sock.remotePort);
+
+			// Add a 'data' event handler to this instance of socket
+			sock.on('data', function(data) {
+				sock.write(cart_server_receiver(sock,data));
+			});
+
+			// Add a 'close' event handler to this instance of socket
+			sock.on('close', function(data) {
+				console.log('IPC:Cart Server CLOSED: ');
+			});
+
+		}).listen(server_port, server_ip);
+		console.log('IPC:Cart Server listening on:' + server_ip +':'+ server_port);
+
+		// Only start the client if the Cloud's Server IP address is set
+		if (client_ip != '') {
+			client = new net.Socket();
+			
+			client.connect(client_port, client_ip, function() {
+				console.log('IPC:Cart Client talking on:' + client_ip + ':' + client_port);
+			});
+			
+			// Add a 'data' event handler for the client socket
+			// data is what the server sent to this socket
+			client.on('data', function(data) {
+			    cart_client_receiver(data);
+			});
+
+			// Add a 'close' event handler for the client socket
+			client.on('close', function() {
+				console.log('IPC:Cart Client closed');
+			});
+
+			client.on('error', function (err) {
+				console.log("!IPC: CLIENT CONNECT ERROR:"+err);
+				client=undefined;
+			});
+
+		}
+	}
+}
+
+function cart_server_receiver(sock,data) {
+	console.log('IPC:Cart Server RECEIVE(' + sock.remoteAddress + ')=' + data);
+
+	var reply='';
+	// process the cloud client requests
+	if (data == "cart_status:follow=on;") {
+		goto_state('S_FollowStart');
+		reply="re_card_status:status=ack;";
+	} else if (data == "cart_status:follow=off;") {
+		goto_state('S_FollowStop');
+		reply="re_card_status:status=ack;";
 	} else {
-		//TBD
+		// TBD
+		reply='You said "' + data + '"';
+	}
+	
+	console.log('IPC:Cart Server SEND(' + reply);
+	return reply;
+}
+
+function cart_client_sender(data) {
+	if (client_ip != '' && client!=undefined) {
+		console.log('IPC:Cart Client SEND(' + data);
+	    client.write(data);
+	}
+}
+
+function cart_client_receiver(data) {
+	if (client_ip != '') {
+		console.log('IPC:Cart Client RECEIVE(' + data);
 	}
 
-	if (verbose)
-		console.log("fetch_UCP="+upc.name+","+upc.price);
+	data=String(data);
+	if (0 == data.indexOf("re_upc_lookup:")) {
+		data=data.slice(14).replace(';','');
+		var i;
+		var param_list = data.split(",");
+		upc_name='';
+		for (i=0;i<param_list.length;i++) {
+			if (0 == param_list[i].indexOf('name=')) {
+				upc_name=param_list[i].slice(5);
+			}
+			if (0 == param_list[i].indexOf('price=')) {
+				upc_price=Number(param_list[i].slice(6));
+			}
+			if (0 == param_list[i].indexOf('weight=')) {
+				upc_weight=Number(param_list[i].slice(7));
+			}
+		}
+		upc_ready=true;
+	} else 	if (0 == data.indexOf("re_upc_lookup:status=nak,message=not found")) {
+		upc_name=undefined;
+		upc_price=0.0;
+		upc_weight=0.0;
+		upc_ready=true;
+	}
 	
-	return upc;
+}
+
+function fetch_UCP(upc_lookup) {
+	if (verbose)
+		console.log("fetch_UCP("+upc_number+")");
+
+	if (!enable_cloud) {
+		// immediate reply for simulation
+		if (upc_lookup == '760557824961') { // microSD
+			upc_name='microSD';
+			upc_price=7.45;
+			upc_weight=0.2;
+			upc_ready=true;
+		} else if (upc_lookup == '941047822994') { // ROM cherry chocolate
+			upc_name='ROM Cherry';
+			upc_price=2.21;
+			upc_weight=0.3;
+			upc_ready=true;
+		} else if (upc_lookup == '2839903352') {  // GUM Toothbrush
+			upc_name='GUM Toothbrush';
+			upc_price=5.62;
+			upc_weight=0.4;
+			upc_ready=true;
+		} if (upc_lookup == '7094212457') {  // Gund plush penguin
+			upc_name='Gund plush penguin';
+			upc_price=12.88;
+			upc_weight=0.77;
+			upc_ready=true;
+		} else {
+			upc_name='Something else';
+			upc_price=9.99;
+			upc_weight=0.09;
+			upc_ready=true;
+		}
+	} else {
+		cart_client_sender("upc_lookup:upc="+upc_number+";");
+	}
+}
+
+function icp_stop() {
+	if (enable_ipc == true) {
+		// server.destroy();
+		if (client_ip != '' && client!=undefined) {
+			client.destroy();
+		}
+	}
 }
 
 ///////////////////////////////////////////////
 // State Handler Functions
 
-function S_Init_prolog() {
-	if (verbose)
-		console.log('Verbose:S_Init_prolog');
-	return true;
-}
-	
+var first_init=true;
 function S_Init_loop() {
-	if (verbose)
-		console.log('Verbose:S_Init_loop');
+	// Give another few seconds for things to start up
+	if (first_init) {
+		setTimeout(S_Init_continue,2000);
+		first_init=false;
+	}
+	set_mood("MOOD_READY");
+}
+function S_Init_continue() {
+	// Give another few seconds for things to finish up
 	goto_state('S_ReadyHome');
-	return false;
 }
 
-function S_Init_epilog() {
-	if (verbose)
-		console.log('Verbose:S_Init_epilog');
-}
-
-function S_Follow_Start_prolog() {
+function S_Follow_Start_enter() {
 	set_led('on');
-	play_buzzer('SONG_FOLLOW_START');
+	set_mood("MOOD_FOLLOW");
 	goto_state('S_Follow_Weight');
+	cart_client_sender("cart_status:follow=on;");
 	return false;
 }
 
-function S_Follow_Stop_prolog() {
+function S_Follow_Stop_enter() {
 	set_led('off');
-	play_buzzer('SONG_FOLLOW_STOP');
+	set_mood("MOOD_READY");
 	goto_state('S_ReadyHome');
+	cart_client_sender("cart_status:follow=off;");
 	return false;
 }
 
-function S_Follow_Weight_prolog() {
+function S_Follow_Weight_enter() {
 	state = find_state('S_Follow_Weight');
-	state_array[state].display_1='MC  '+format_float(disp_weight)+' lb '; 
+	state_array[state].display_1='Cart'+format_float(disp_weight)+' lb '; 
 	return true;
 }
 
-function S_Follow_Price_prolog() {
+function S_Follow_Price_enter() {
 	state = find_state('S_Follow_Price');
-	state_array[state].display_1='MC    $'+format_float(disp_cost)+' '; 
+	state_array[state].display_1='Cart  $'+format_float(disp_cost)+' '; 
 	return true;
 }
 
-function S_ScanReady_Loop() {
+function S_ScanReady_loop() {
 	if (scanner_input != "") {
-		upc_number=scanner_input;
-		scanner_input=""
-		upc=fetch_UCP(upc_number);
-		if (upc == undefined) {
+		goto_state('S_ScanFetch');
+	}
+	return true;
+}
+
+function S_ScanFetch_enter() {
+	upc_number=scanner_input;
+	scanner_input=""
+	upc_ready = false;
+	fetch_UCP(upc_number);
+}
+
+function S_ScanFetch_loop() {
+	if (upc_ready) {
+		if (upc_name == undefined) {
 			goto_state('S_ScanMissing');
 			return false;
-		}
-		else {
-			upc_price = upc.price;
-			upc_weight = upc.weight;
+		} else {
 			goto_state('S_ScanAccept');
 			return false;
 		}
@@ -459,20 +729,20 @@ function S_ScanReady_Loop() {
 	return true;
 }
 
-function S_ScanAccept_Prolog() {
+function S_ScanAccept_enter() {
 	state = find_state('S_ScanAccept');
 	state_array[state].display_1='Scan  $'+format_float(upc_price)+' ';
 	return true;
 }
 
-function S_ScanAdd_Prolog() {
+function S_ScanAdd_enter() {
 	disp_cost += upc_price;
 	disp_weight += upc_weight;
 	goto_state('S_Follow_Price');
 	return false;
 }
 
-function S_ScanDel_Prolog() {
+function S_ScanDel_enter() {
 	disp_cost -= upc_price;
 	if (disp_cost < 0.0) {
 		disp_cost=0.0;
@@ -481,61 +751,132 @@ function S_ScanDel_Prolog() {
 	return false;
 }
 
-function S_TestMotorL_Epilog() {
+function S_TestAnalog_loop() {
+	state = find_state('S_TestAnalog');
+	state_array[state].display_2=format_int(a1,3)+format_int(a2,4)+format_int(a3,4)+format_int(a4,4);
+	// display the new state
+	disp_state(next_state);
+}
+
+var test_mood="MOOD_READY";
+var prev_mood="MOOD_READY";
+function S_TestMood_Init_enter() {
+	test_mood="MOOD_READY";
+	prev_mood=current_mood;
+	goto_state('S_TestMood');
+	return false;
+}
+
+function S_TestMood_enter() {
+	state = find_state('S_TestMood');
+	if (test_mood == "MOOD_READY") {
+		state_array[state].display_1= 'Mood       READY';
+	}
+	if (test_mood == "MOOD_FOLLOW") {
+		state_array[state].display_1= 'Mood      FOLLOW';
+	}
+	if (test_mood == "MOOD_LOOKING") {
+		state_array[state].display_1= 'Mood     LOOKING';
+	}
+	if (test_mood == "MOOD_LOST") {
+		state_array[state].display_1= 'Mood        LOST';
+	}
+	return true;
+}
+
+function S_TestMood_exit() {
+	current_mood='';
+	set_mood(prev_mood);
+}
+
+function S_TestMood_Play_enter() {
+	current_mood='';
+	if (test_mood == "MOOD_READY") {
+		set_mood('MOOD_READY');
+	}
+	if (test_mood == "MOOD_FOLLOW") {
+		set_mood('MOOD_FOLLOW');
+	}
+	if (test_mood == "MOOD_LOOKING") {
+		set_mood('MOOD_LOOKING');
+	}
+	if (test_mood == "MOOD_LOST") {
+		set_mood('MOOD_LOST');
+	}
+	goto_state('S_TestMood');
+	return false;
+}
+
+function S_TestMood_Next_enter() {
+	if (test_mood == "MOOD_READY") {
+		test_mood = "MOOD_FOLLOW"
+	} else if (test_mood == "MOOD_FOLLOW") {
+		test_mood = "MOOD_LOOKING"
+	} else if (test_mood == "MOOD_LOOKING") {
+		test_mood = "MOOD_LOST"
+	} else if (test_mood == "MOOD_LOST") {
+		test_mood = "MOOD_READY"
+	}
+	goto_state('S_TestMood');
+	return false;
+}
+
+
+function S_TestMotorL_exit() {
 	MotorL_control('Off');
 }
 
-function S_TestMotorLFwd_Prolog() {
+function S_TestMotorLFwd_enter() {
 	MotorL_control('Fwd');
 	goto_state('S_TestMotorL');
 	return false;
 }
 
-function S_TestMotorLBck_Prolog() {
+function S_TestMotorLBck_enter() {
 	MotorL_control('Bck');
 	goto_state('S_TestMotorL');
 	return false;
 }
 
-function S_TestMotorLOff_Prolog() {
+function S_TestMotorLOff_enter() {
 	MotorL_control('Off');
 	goto_state('S_TestMotorL');
 	return false;
 }
 
-function S_TestMotorR_Epilog() {
+function S_TestMotorR_exit() {
 	MotorR_control('Off');
 }
 
-function S_TestMotorRFwd_Prolog() {
+function S_TestMotorRFwd_enter() {
 	MotorR_control('Fwd');
 	goto_state('S_TestMotorR');
 	return false;
 }
 
-function S_TestMotorRBck_Prolog() {
+function S_TestMotorRBck_enter() {
 	MotorR_control('Bck');
 	goto_state('S_TestMotorR');
 	return false;
 }
 
-function S_TestMotorROff_Prolog() {
+function S_TestMotorROff_enter() {
 	MotorR_control('Off');
 	goto_state('S_TestMotorR');
 	return false;
 }
 
-function S_TestBeepOff_Epilog() {
+function S_TestBeepOff_exit() {
 	beeper_control("Off");
 }
 
-function S_TestBeepOn_Prolog() {
+function S_TestBeepOn_enter() {
 	play_buzzer('SONG_POWER_UP');
 	goto_state('S_TestBeeper');
 	return false;
 }
 
-function S_TestBeepOff_Prolog() {
+function S_TestBeepOff_enter() {
 	beeper_control("Off");
 	goto_state('S_TestBeeper');
 	return false;
@@ -548,7 +889,7 @@ var No_State="None";
 var STATE_NOP="Nop";
 
 // Constructor
-function StateGUI(state_name,flags,display_1,display_2,k1,k2,k3,k4,state_prolog,state_loop,state_epilog) {
+function StateGUI(state_name,flags,display_1,display_2,k1,k2,k3,k4,state_enter,state_loop,state_exit) {
 	this.state_name = state_name;
 	this.state_flags = flags;
 	this.display_1 = display_1;
@@ -557,9 +898,9 @@ function StateGUI(state_name,flags,display_1,display_2,k1,k2,k3,k4,state_prolog,
 	this.k2 = k2;
 	this.k3 = k3;
 	this.k4 = k4;
-	this.state_prolog = state_prolog;
+	this.state_enter = state_enter;
 	this.state_loop   = state_loop;
-	this.state_epilog = state_epilog;
+	this.state_exit = state_exit;
 }
 
 StateGUI.prototype.getName = function() { return this.state_name; };
@@ -573,13 +914,13 @@ module.exports = StateGUI;
 state_array = [];
 
 state_array.push(new StateGUI('S_Init',0,
- 'FollowMe Cart   ',
+ 'Follow Me Cart! ',
  '  Init...       ',
- STATE_NOP,STATE_NOP,STATE_NOP,'S_ReadyHome',
- No_State,No_State,No_State));
+ 'S_ReadyHome','S_ReadyHome','S_ReadyHome','S_ReadyHome',
+ No_State,S_Init_loop,No_State));
 
 state_array.push(new StateGUI('S_Shutdown',0,
- 'FollowMe Cart   ',
+ 'Follow Me Cart! ',
  '  Bye...        ',
  STATE_NOP,STATE_NOP,STATE_NOP,STATE_NOP,
  No_State,No_State,No_State));
@@ -596,25 +937,25 @@ state_array.push(new StateGUI('S_FollowStart',0,
  '',
  '',
  STATE_NOP,STATE_NOP,STATE_NOP,STATE_NOP,
- S_Follow_Start_prolog,No_State,No_State));
+ S_Follow_Start_enter,No_State,No_State));
 
 state_array.push(new StateGUI('S_FollowStop',0,
  '',
  '',
  STATE_NOP,STATE_NOP,STATE_NOP,STATE_NOP,
- S_Follow_Stop_prolog,No_State,No_State));
+ S_Follow_Stop_enter,No_State,No_State));
 
 state_array.push(new StateGUI('S_Follow_Weight',0,
- 'MC    123.45 lb ',
+ 'Cart  123.45 lb ',
  'Stop  Scan  Help',
  'S_FollowStop','S_ScanReady','S_HelpSend','S_Follow_Price', 
- S_Follow_Weight_prolog,No_State,No_State));
+ S_Follow_Weight_enter,No_State,No_State));
 
 state_array.push(new StateGUI('S_Follow_Price',0,
- 'MC      $123.45 ',
+ 'Cart    $123.45 ',
  'Stop  Scan  Help',
  'S_FollowStop','S_ScanReady','S_HelpSend','S_Follow_Weight', 
- S_Follow_Price_prolog,No_State,No_State));
+ S_Follow_Price_enter,No_State,No_State));
 
 // Scan!
 
@@ -622,25 +963,31 @@ state_array.push(new StateGUI('S_ScanReady',0,
  'Ready to Scan...',
  'Cancel          ',
  'S_Follow_Weight',STATE_NOP,STATE_NOP,'S_Follow_Weight', 
- S_ScanReady_Loop,S_ScanReady_Loop,No_State));
+ S_ScanReady_loop,S_ScanReady_loop,No_State));
+
+state_array.push(new StateGUI('S_ScanFetch',0,
+ 'Fetching info...',
+ 'Cancel          ',
+ 'S_Follow_Weight',STATE_NOP,STATE_NOP,'S_Follow_Weight', 
+ S_ScanFetch_enter,S_ScanFetch_loop,No_State));
 
 state_array.push(new StateGUI('S_ScanAccept',0,
  'Scan    $123.45 ',
  'Add   Del       ',
  'S_ScanAdd','S_ScanDel',STATE_NOP,'S_Follow_Weight', 
- S_ScanAccept_Prolog,No_State,No_State));
+ S_ScanAccept_enter,No_State,No_State));
 
 state_array.push(new StateGUI('S_ScanAdd',0,
  '',
  '',
  STATE_NOP,STATE_NOP,STATE_NOP,STATE_NOP, 
- S_ScanAdd_Prolog,No_State,No_State));
+ S_ScanAdd_enter,No_State,No_State));
 
 state_array.push(new StateGUI('S_ScanDel',0,
  '',
  '',
  STATE_NOP,STATE_NOP,STATE_NOP,STATE_NOP, 
- S_ScanDel_Prolog,No_State,No_State));
+ S_ScanDel_enter,No_State,No_State));
 
 state_array.push(new StateGUI('S_ScanMissing',0,
  'Item not found  ',
@@ -706,14 +1053,48 @@ state_array.push(new StateGUI('S_SetupHstIP',0,
 state_array.push(new StateGUI('S_TestHome',0,
  'Test            ',
  'In    Out  Quit ',
- 'S_TestInputs','S_TestMotorL','S_ReadyHome','S_ReadyHome', 
+ 'S_TestAnalog','S_TestMotorL','S_ReadyHome','S_ReadyHome', 
  No_State,No_State,No_State));
+
+state_array.push(new StateGUI('S_TestAnalog',0,
+ 'Inputs  Analog  ',
+ '123 123 123 123 ',
+ STATE_NOP,STATE_NOP,STATE_NOP,'S_TestInputs', 
+ No_State,S_TestAnalog_loop,No_State));
 
 state_array.push(new StateGUI('S_TestInputs',0,
  'Inputs  L R F B ',
  'n n n n n n n n ',
- STATE_NOP,STATE_NOP,STATE_NOP,'S_TestHome', 
+ STATE_NOP,STATE_NOP,STATE_NOP,'S_TestMoodInit', 
  No_State,No_State,No_State));
+
+// Test Moods
+
+state_array.push(new StateGUI('S_TestMoodInit',0,
+ '',
+ '',
+ STATE_NOP,STATE_NOP,STATE_NOP,STATE_NOP, 
+ S_TestMood_Init_enter,No_State,No_State));
+
+state_array.push(new StateGUI('S_TestMood',0,
+ 'Mood      READY ',
+ 'Play  Next      ',
+ 'S_TestMoodPlay','S_TestMoodNext',STATE_NOP,'S_TestMotorL', 
+ S_TestMood_enter,No_State,S_TestMood_exit));
+
+state_array.push(new StateGUI('S_TestMoodPlay',0,
+ '',
+ '',
+ STATE_NOP,STATE_NOP,STATE_NOP,STATE_NOP, 
+ S_TestMood_Play_enter,No_State,No_State));
+
+state_array.push(new StateGUI('S_TestMoodNext',0,
+ '',
+ '',
+ STATE_NOP,STATE_NOP,STATE_NOP,STATE_NOP, 
+ S_TestMood_Next_enter,No_State,No_State));
+
+
 
 // Test Motors
 
@@ -723,25 +1104,25 @@ state_array.push(new StateGUI('S_TestMotorL',0,
  'Outputs  MotorL ',
  'Fwd   Back  Stop',
  'S_TestMotorLFwd','S_TestMotorLBck','S_TestMotorLOff','S_TestMotorR', 
- No_State,No_State,S_TestMotorL_Epilog));
+ No_State,No_State,S_TestMotorL_exit));
 
 state_array.push(new StateGUI('S_TestMotorLFwd',0,
  '',
  '',
  STATE_NOP,STATE_NOP,STATE_NOP,STATE_NOP, 
- S_TestMotorLFwd_Prolog,No_State,No_State));
+ S_TestMotorLFwd_enter,No_State,No_State));
 
 state_array.push(new StateGUI('S_TestMotorLBck',0,
  '',
  '',
  STATE_NOP,STATE_NOP,STATE_NOP,STATE_NOP, 
- S_TestMotorLBck_Prolog,No_State,No_State));
+ S_TestMotorLBck_enter,No_State,No_State));
 
 state_array.push(new StateGUI('S_TestMotorLOff',0,
  '',
  '',
  STATE_NOP,STATE_NOP,STATE_NOP,STATE_NOP, 
- S_TestMotorLOff_Prolog,No_State,No_State));
+ S_TestMotorLOff_enter,No_State,No_State));
 
 // MotorR
 
@@ -749,25 +1130,25 @@ state_array.push(new StateGUI('S_TestMotorR',0,
  'Outputs  MotorR ',
  'Fwd   Back  Stop',
  'S_TestMotorRFwd','S_TestMotorRBck','S_TestMotorROff','S_TestBeeper', 
- No_State,No_State,S_TestMotorR_Epilog));
+ No_State,No_State,S_TestMotorR_exit));
 
 state_array.push(new StateGUI('S_TestMotorRFwd',0,
  '',
  '',
  STATE_NOP,STATE_NOP,STATE_NOP,STATE_NOP, 
- S_TestMotorRFwd_Prolog,No_State,No_State));
+ S_TestMotorRFwd_enter,No_State,No_State));
 
 state_array.push(new StateGUI('S_TestMotorRBck',0,
  '',
  '',
  STATE_NOP,STATE_NOP,STATE_NOP,STATE_NOP, 
- S_TestMotorRBck_Prolog,No_State,No_State));
+ S_TestMotorRBck_enter,No_State,No_State));
 
 state_array.push(new StateGUI('S_TestMotorROff',0,
  '',
  '',
  STATE_NOP,STATE_NOP,STATE_NOP,STATE_NOP, 
- S_TestMotorROff_Prolog,No_State,No_State));
+ S_TestMotorROff_enter,No_State,No_State));
 
 // Test Beeper
 
@@ -775,19 +1156,19 @@ state_array.push(new StateGUI('S_TestBeeper',0,
  'Outputs  Beeper ',
  'On    Off       ',
  'S_TestBeepOn','S_TestBeepOff',STATE_NOP,'S_TestHome', 
- No_State,No_State,S_TestBeepOff_Epilog));
+ No_State,No_State,S_TestBeepOff_exit));
 
 state_array.push(new StateGUI('S_TestBeepOn',0,
  '',
  '',
  STATE_NOP,STATE_NOP,STATE_NOP,STATE_NOP, 
- S_TestBeepOn_Prolog,No_State,No_State));
+ S_TestBeepOn_enter,No_State,No_State));
 
 state_array.push(new StateGUI('S_TestBeepOff',0,
  '',
  '',
  STATE_NOP,STATE_NOP,STATE_NOP,STATE_NOP, 
- S_TestBeepOff_Prolog,No_State,No_State));
+ S_TestBeepOff_enter,No_State,No_State));
 
 
 ///////////////////////////////////////////////
@@ -796,7 +1177,7 @@ state_array.push(new StateGUI('S_TestBeepOff',0,
 function disp_state(next_state) {
 	if (verbose) {
 		console.log('');
-		console.log('/----------------\\');
+		console.log('/----------------\\'+' Mood='+current_mood);
 		console.log('|'+state_array[next_state].display_1+'| Beeper=' + beeper + ', Scanner='+scanner_input);
 		console.log('|'+state_array[next_state].display_2+'| Motors='+motorL+' '+motorR);
 		console.log('\\--1----2----3---/');
@@ -836,16 +1217,16 @@ function goto_state(select_state_name) {
 	}
 
 	// execute any state epilog function
-	if (state_array[state_now].state_epilog != No_State) {
-		state_array[state_now].state_epilog();
+	if (state_array[state_now].state_exit != No_State) {
+		state_array[state_now].state_exit();
 	}
 	
 	// assert new state
 	state_now = next_state;
 
 	// execute any state prolog function
-	if (state_array[state_now].state_prolog != No_State) {
-		if (!state_array[state_now].state_prolog()) {
+	if (state_array[state_now].state_enter != No_State) {
+		if (!state_array[state_now].state_enter()) {
 			return;
 		}
 	}
@@ -865,17 +1246,34 @@ function setup_init() {
 		// skip the 'node app.js' parameters
  		if (index >= 2) {
 			var i;
-			for (i=0; i<val.length;i++) {
-				var c = val.charAt(i);
-				if (c != '-')
-					config_cmnd(val.charAt(i))
+			
+			if (val.indexOf('--server=') == 0) {
+				server_port=val.slice(9);
+				enable_ipc=true;
+			} else if (val.indexOf('--client=') == 0) {
+				val=val.slice(9);
+				var j = val.indexOf(':');
+				if (0 < j) {
+					client_ip=val.slice(0,j);
+					client_port=val.slice(j+1);
+					enable_ipc=true;
+					enable_cloud =true;
+				}
+			} else {
+				// key configure commands
+				for (i=0; i<val.length;i++) {
+					var c = val.charAt(i);
+					if (c != '-')
+						config_cmnd(val.charAt(i))
+				}
 			}
 		}
 	});
+	console.log("IPC:"+server_port+','+client_ip+','+client_port);
 
 	// Show menu if we are still in setup mode
 	if (input_state == "setup")
-		setup_usage();
+		setup_display();
 }
 
 function usage_enabled(selected) {
@@ -885,7 +1283,7 @@ function usage_enabled(selected) {
 		return '[ ]';
 }
 
-function setup_usage() {
+function setup_display() {
 	console.log("syntax { onboard_gui.py [0..8,v,g]");
 	console.log(" i : "+usage_enabled(enable_io     )+" I/O (LCD,Buttons,LED)");
 	console.log(" b : "+usage_enabled(enable_buzzer )+" Buzzer");
@@ -928,18 +1326,26 @@ function config_cmnd(key) {
 		enable_cloud   = true;
 		enable_scanner = true;
 	}
-	if (key == 'g')
+	if (key == 'g') {
 		run_init();
+		return;
+	}
 
 	// ctrl-c ( end of text )
 	if ( key === '\u0003' )
 		process.exit();
 	if (key == 'q') 
 		process.exit();
+
+	// display current setting (if we get here)		
+	setup_display();
+
 }
 
 //////////////////////////////////////////////////
 // Run Mode
+
+var mraa = require('mraa');
 
 function run_init() {
 	input_state="run";
@@ -957,13 +1363,22 @@ function run_init() {
 
 		board.on("ready", function() {
 			init_board();
+			init_ipc();
 			goto_state('S_Init');
 			play_buzzer('SONG_POWER_UP');
+			console.log('MRAA Version: ' + mraa.getVersion()); //write the mraa version to the Intel XDK console
+			var distanceSensor = new DistanceSensor(0,1);
+			setInterval(function()
+			{
+				distanceSensor.distance();
+				distanceSensor.spread();
+			}, 1000);
 		});
 	} else {
+		init_ipc();
 		goto_state('S_Init');
 	}
-
+  	
 }
 
 function run_usage() {
@@ -994,6 +1409,10 @@ function run_cmnd(key) {
 	if (key == '4')
 		goto_state(state_array[state_now].k4)
 
+	// refresh display
+	if (key == ' ') 
+		disp_state(state_now);
+
 	// simlation for scanner
 	if (key == 'a')
 		scanner_input="760557824961"; // microSD
@@ -1007,11 +1426,16 @@ function run_cmnd(key) {
 
 function run_loop() {
 
+	// execute any state loop function
+	if (state_array[state_now].state_loop != No_State) {
+		state_array[state_now].state_loop();
+	}
+	
 	// poll scanner
 	scan_scanner();
-	if (scanner_input != "") {
-		S_ScanReady_Loop();
-		goto_state('S_ScanAccept');
+	if (('S_ScanReady' != state_array[state_now].state_name) && (scanner_input != "")) {
+		// direct to scan fetch
+		goto_state('S_ScanReady');
 	}
 }
 
@@ -1031,7 +1455,13 @@ function on_exit() {
 	play_buzzer('SONG_POWER_DOWN');
 	
 	// Stop Cloud
-	
+	icp_stop();
+
+	// Give another few seconds for things to finish up
+	setTimeout(final_exit,2000);
+}
+
+function final_exit() {
 	// Now we can safely exit
 	process.exit();
 }
@@ -1040,7 +1470,6 @@ function on_exit() {
 stdin.on( 'data', function( key ){
 	if (input_state=="setup") {
 		config_cmnd(key);
-		setup_usage();
 	} else {
 		run_cmnd(key);
 	}
@@ -1072,3 +1501,8 @@ setup_init();
 
 // Scan the non-event I/O every 1/4 second
 setInterval(fmc_loop, 250);
+
+
+
+
+
