@@ -34,17 +34,17 @@
 ///////////////////////////////////////////////
 // Port Assignments
 
-var BUTTON_1_PORT=6
-var BUTTON_2_PORT=4
-var BUTTON_3_PORT=7
-var BUTTON_4_PORT=8
+var BUTTON_1_PORT=4
+var BUTTON_2_PORT=5
+var BUTTON_3_PORT=6
+var BUTTON_4_PORT=7
 
-var LED_1_PORT=5
-var BUZZER_1_PORT=2
+var LED_1_PORT=2
+var BUZZER_1_PORT=3
 
 const BUZZER_AS_LED = 1;
 const BUZZER_AS_UMP = 2;
-var buzzer_mode = BUZZER_AS_LED;
+var buzzer_mode = BUZZER_AS_UMP;
 
 ///////////////////////////////////////////////
 // Globals
@@ -326,6 +326,27 @@ function buzzer_stop() {
 	buzzer.off();
 }
 
+var chordIndex = 0;
+var chords = [];
+
+function melody_play() {
+	chordIndex = 0;
+	melody_loop()
+}
+
+function melody_loop()
+{
+	if (chords.length != 0)
+	{
+		if (chords[chordIndex])
+			console.log( buzzer.playSound(chords[chordIndex], 200000) );
+		chordIndex++;
+		// set timer for next note if any
+		if (chordIndex <= chords.length - 1)
+			setInterval(melody_loop, 100);
+	}
+}
+
 function play_buzzer(sound) {
 
 	if (verbose)
@@ -379,40 +400,54 @@ function play_buzzer(sound) {
 
 
 		if (sound == "SONG_POWER_UP") {
-			buzzer.playSound(upmBuzzer.DO, 100000);
-			buzzer.playSound(upmBuzzer.MI, 100000);
-			buzzer.playSound(upmBuzzer.SOL, 100000);
+			chords = [];
+			chords.push(upmBuzzer.DO);
+			chords.push(upmBuzzer.MI);
+			chords.push(upmBuzzer.SOL);
+			melody_play();
 		}
 
 		if (sound == "SONG_POWER_DOWN") {
-			buzzer.playSound(upmBuzzer.SOL, 100000);
-			buzzer.playSound(upmBuzzer.MI, 100000);
-			buzzer.playSound(upmBuzzer.DO, 100000);
+			chords = [];
+			chords.push(upmBuzzer.SOL);
+			chords.push(upmBuzzer.MI);
+			chords.push(upmBuzzer.DO);
+			melody_play();
 		}
 
 		if (sound == "SONG_FOLLOWING") {
-			buzzer.playSound(upmBuzzer.DO, 100000);
-			buzzer.playSound(upmBuzzer.MI, 100000);
+			chords = [];
+			chords.push(upmBuzzer.DO);
+			chords.push(upmBuzzer.MI);
+			melody_play();
 		}
 
 		if (sound == "SONG_WAITING") {
-			buzzer.playSound(upmBuzzer.MI, 100000);
-			buzzer.playSound(upmBuzzer.DO, 100000);
+			chords = [];
+			chords.push(upmBuzzer.MI);
+			chords.push(upmBuzzer.DO);
+			melody_play();
 		}
 
 		if (sound == "SONG_OK") {
-			buzzer.playSound(upmBuzzer.MI, 100000);
-			buzzer.playSound(upmBuzzer.SOL, 100000);
+			chords = [];
+			chords.push(upmBuzzer.MI);
+			chords.push(upmBuzzer.SOL);
+			melody_play();
 		}
 
 		if (sound == "SONG_KEY_PRESS") {
-			buzzer.playSound(upmBuzzer.MI, 100000);
+			chords = [];
+			chords.push(upmBuzzer.MI);
+			melody_play();
 		}
 
 		if (sound == "SONG_HELP") {
-			buzzer.playSound(upmBuzzer.SI, 100000);
-			buzzer.playSound(upmBuzzer.MI, 100000);
-			buzzer.playSound(upmBuzzer.SI, 100000);
+			chords = [];
+			chords.push(upmBuzzer.SI);
+			chords.push(upmBuzzer.MI);
+			chords.push(upmBuzzer.SI);
+			melody_play();
 		}
 	}
 }
@@ -695,6 +730,7 @@ function S_Follow_Stop_enter() {
 	set_led('off');
 	set_mood("MOOD_READY");
 	goto_state('S_ReadyHome');
+	play_buzzer('SONG_WAITING');
 	cart_client_sender("cart_status:follow=off;");
 	return false;
 }
