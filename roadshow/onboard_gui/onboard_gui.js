@@ -66,6 +66,7 @@ var analog4 = undefined;
 
 var input_state="setup";
 var state_now=0;
+var state_prev=0;
 var state_follow_on=false;
 
 var enable_io     = false;
@@ -105,11 +106,19 @@ var scanner_mode = SCANNER_AS_SPAWN;
 var spawn_scanner=undefined;
 var scanner_agent=undefined;
 
+function UPC_Entry(upc,name,price,weight,message) {
+	this.status = 'ack';
+	this.upc = upc;
+	this.name = name;
+	this.price = price;
+	this.weight = weight;
+	this.message = message;
+};
+
 var scanner_input="";
-var upc_name=undefined;
-var upc_number = "";
-var upc_price=0.0;
-var upc_weight=0.0;
+var upc_ready = false;
+var upc_rec=new UPC_Entry(0,'',0.0,0.0,'');
+
 
 // server
 
@@ -130,13 +139,7 @@ var socket_debug = new Socket_Debug_Rec();
 
 // UPC Object Constructor
 
-function UPC_Entry(upc,name,price,weight,message) {
-	this.upc = upc;
-	this.name = name;
-	this.price = price;
-	this.weight = weight;
-	this.message = message;
-};
+
 
 ///////////////////////////////////////////////
 // Common routines
@@ -491,7 +494,7 @@ function init_scanner() {
 				data = String(data);
 				console.log('SCANNER_SPAWN:' + data);
 				if (0 == data.indexOf('SCANNER_READ:')) {
-					scanner_input=data.slice(13);
+					scanner_input=data.slice(13).replace('\n','');
 				}
 			});
 
@@ -575,7 +578,7 @@ function shop_upc_del(upc) {
 		goto_state('S_Follow_Weight');
 }
 
-function shop_clear(upc) {
+function shop_clear() {
 	disp_weight = 0.0;
 	disp_cost = 0.0;
 }
@@ -661,14 +664,24 @@ function server_rec_parse(data) {
 	return rec;
 }
 
+function upc_rec_reset() {
+	upc_rec.status='ack';
+	upc_rec.name='';
+	upc_rec.number = '';
+	upc_rec.price=0.0;
+	upc_rec.weight=0.0;
+	upc_rec.message='';
+}
+
 function parse_rec_to_upc(rec) {
-	upc = new UPC_Entry(0,'',0.0,0.0,'');
-	if (rec['upc']!=undefined) upc.upc=rec['upc'];
-	if (rec['name']!=undefined) upc.name=rec['name'];
-	if (rec['weight']!=undefined) upc.weight=Number(rec['weight']);
-	if (rec['price']!=undefined) upc.price=Number(rec['price']);
-	if (rec['message']!=undefined) upc.message=rec['message'];
-	return upc;	
+	upc_rec_reset();
+	if (rec['status']!=undefined) upc_rec.status=rec['status'];
+	if (rec['upc']!=undefined) upc_rec.upc=rec['upc'];
+	if (rec['name']!=undefined) upc_rec.name=rec['name'];
+	if (rec['weight']!=undefined) upc_rec.weight=Number(rec['weight']);
+	if (rec['price']!=undefined) upc_rec.price=Number(rec['price']);
+	if (rec['message']!=undefined) upc_rec.message=rec['message'];
+	return upc_rec;
 }
 
 // "cust_alert:message=SALE! Aisle 4;"
@@ -723,65 +736,51 @@ function cart_client_receiver(data) {
 
 	data=String(data);
 	if (0 == data.indexOf("re_upc_lookup:")) {
-		data=data.slice(14).replace(';','');
-		var i;
-		var param_list = data.split(",");
-		upc_name='';
-		for (i=0;i<param_list.length;i++) {
-			if (0 == param_list[i].indexOf('name=')) {
-				upc_name=param_list[i].slice(5);
-			}
-			if (0 == param_list[i].indexOf('price=')) {
-				upc_price=Number(param_list[i].slice(6));
-			}
-			if (0 == param_list[i].indexOf('weight=')) {
-				upc_weight=Number(param_list[i].slice(7));
-			}
-		}
-		upc_ready=true;
-	} else 	if (0 == data.indexOf("re_upc_lookup:status=nak,message=not found")) {
-		upc_name=undefined;
-		upc_price=0.0;
-		upc_weight=0.0;
+		parse_rec_to_upc(server_rec_parse(data.slice(14).replace(';','')));
 		upc_ready=true;
 	}
 	
 }
 
-function fetch_UCP(upc_lookup) {
+function fetch_UCP() {
 	if (verbose)
-		console.log("fetch_UCP("+upc_number+")");
+		console.log("fetch_UCP("+upc_rec.number+")");
 
 	if (!enable_cloud) {
 		// immediate reply for simulation
-		if (upc_lookup == '760557824961') { // microSD
-			upc_name='microSD';
-			upc_price=7.45;
-			upc_weight=0.2;
+		if (upc_rec.number == '760557824961') { // microSD
+			upc_rec.name='microSD';
+			upc_rec.price=7.45;
+			upc_rec.weight=0.2;
+			upc_rec.status='ack';
 			upc_ready=true;
-		} else if (upc_lookup == '941047822994') { // ROM cherry chocolate
-			upc_name='ROM Cherry';
-			upc_price=2.21;
-			upc_weight=0.3;
+		} else if (upc_rec.number == '941047822994') { // ROM cherry chocolate
+			upc_rec.name='ROM Cherry';
+			upc_rec.price=2.21;
+			upc_rec.weight=0.3;
+			upc_rec.status='ack';
 			upc_ready=true;
-		} else if (upc_lookup == '2839903352') {  // GUM Toothbrush
-			upc_name='GUM Toothbrush';
-			upc_price=5.62;
-			upc_weight=0.4;
+		} else if (upc_rec.number == '2839903352') {  // GUM Toothbrush
+			upc_rec.name='GUM Toothbrush';
+			upc_rec.price=5.62;
+			upc_rec.weight=0.4;
+			upc_rec.status='ack';
 			upc_ready=true;
-		} if (upc_lookup == '7094212457') {  // Gund plush penguin
-			upc_name='Gund plush penguin';
-			upc_price=12.88;
-			upc_weight=0.77;
+		} if (upc_rec.number == '7094212457') {  // Gund plush penguin
+			upc_rec.name='Gund plush penguin';
+			upc_rec.price=12.88;
+			upc_rec.weight=0.77;
+			upc_rec.status='ack';
 			upc_ready=true;
 		} else {
-			upc_name='Something else';
-			upc_price=9.99;
-			upc_weight=0.09;
+			upc_rec.name='Something else';
+			upc_rec.price=9.99;
+			upc_rec.weight=0.09;
+			upc_rec.status='nak';
 			upc_ready=true;
 		}
 	} else {
-		cart_client_sender("upc_lookup:upc="+upc_number+";");
+		cart_client_sender("upc_lookup:upc="+upc_rec.number+";");
 	}
 }
 
@@ -857,6 +856,13 @@ function S_Follow_Price_enter() {
 
 // scan
 
+var scanner_state_pushed=0;
+function S_ScanInit_enter() {
+	scanner_state_pushed=state_prev;
+	console.log("S_ScanInit_enter:"+state_array[scanner_state_pushed].state_name);
+	goto_state('S_ScanReady');
+}
+
 function S_ScanReady_loop() {
 	if (scanner_input != "") {
 		goto_state('S_ScanFetch');
@@ -864,10 +870,10 @@ function S_ScanReady_loop() {
 }
 
 function S_ScanFetch_enter() {
-	upc_number=scanner_input;
+	upc_rec.number=scanner_input;
 	scanner_input=""
 	upc_ready = false;
-	fetch_UCP(upc_number);
+	fetch_UCP();
 	
 	// check it instant (simulater) answer 
 	S_ScanFetch_loop();
@@ -875,7 +881,7 @@ function S_ScanFetch_enter() {
 
 function S_ScanFetch_loop() {
 	if (upc_ready) {
-		if (upc_name == undefined) {
+		if (upc_rec.status != 'ack') {
 			goto_state('S_ScanMissing');
 		} else {
 			goto_state('S_ScanAccept');
@@ -885,21 +891,32 @@ function S_ScanFetch_loop() {
 
 function S_ScanAccept_enter() {
 	state = find_state('S_ScanAccept');
-	state_array[state].display_1='Scan  $'+format_float(upc_price)+' ';
+	state_array[state].display_1='Scan  $'+format_float(upc_rec.price)+' ';
 }
 
 function S_ScanAdd_enter() {
-	disp_cost += upc_price;
-	disp_weight += upc_weight;
-	goto_state('S_Follow_Price');
+	disp_cost += upc_rec.price;
+	disp_weight += upc_rec.weight;
+	goto_state('S_ScanExit');
 }
 
 function S_ScanDel_enter() {
-	disp_cost -= upc_price;
+	disp_cost -= upc_rec.price;
 	if (disp_cost < 0.0) {
 		disp_cost=0.0;
 	}
-	goto_state('S_Follow_Price');
+	disp_weight -= upc_rec.weight;
+	if (disp_weight < 0.0) {
+		disp_weight=0.0;
+	}
+	goto_state('S_ScanExit');
+}
+
+function S_ScanExit_enter() {
+	console.log("S_ScanExit_enter:"+state_array[scanner_state_pushed].state_name);
+	var return_state=state_array[scanner_state_pushed].state_name
+	scanner_state_pushed=0;
+	goto_state(return_state);
 }
 
 // alert
@@ -908,7 +925,6 @@ var banner_index=0;
 var banner_timeout=500;
 var banner_Interval=undefined;
 function alert_banner_loop() {
-	console.log("FOO3:alert_banner_loop");
 	if      (0 == banner_index)  set_lcd_backlight(76, 0, 130);
 	else if (1 == banner_index)  set_lcd_backlight(100, 255, 100);
 	else if (1 == banner_index)  set_lcd_backlight(200, 200, 0);
@@ -1141,27 +1157,34 @@ state_array.push(new StateGUI('S_Follow_Weight',0,
 state_array.push(new StateGUI('S_Follow_Sonor',0,
  'Cart  123.45 lb ',
  'Stop  Scan  Help',
- 'S_FollowStop','S_ScanReady','S_HelpSend','S_Follow_Price', 
+ 'S_FollowStop','S_ScanInit','S_HelpSend','S_Follow_Price', 
  S_Follow_Sonar_loop,S_Follow_Sonar_loop,No_State));
 
+
 // Scan!
+
+state_array.push(new StateGUI('S_ScanInit',0,
+ '',
+ '',
+ STATE_NOP,STATE_NOP,STATE_NOP,STATE_NOP,
+ S_ScanInit_enter,No_State,No_State));
 
 state_array.push(new StateGUI('S_ScanReady',0,
  'Ready to Scan...',
  'Cancel          ',
- 'S_Follow_Weight',STATE_NOP,STATE_NOP,'S_Follow_Weight', 
+ 'S_Follow_Weight',STATE_NOP,STATE_NOP,'S_ScanExit', 
  S_ScanReady_loop,S_ScanReady_loop,No_State));
 
 state_array.push(new StateGUI('S_ScanFetch',0,
  'Fetching info...',
  'Cancel          ',
- 'S_Follow_Weight',STATE_NOP,STATE_NOP,'S_Follow_Weight', 
+ 'S_Follow_Weight',STATE_NOP,STATE_NOP,'S_ScanExit', 
  S_ScanFetch_enter,S_ScanFetch_loop,No_State));
 
 state_array.push(new StateGUI('S_ScanAccept',0,
  'Scan    $123.45 ',
- 'Add   Del       ',
- 'S_ScanAdd','S_ScanDel',STATE_NOP,'S_Follow_Weight', 
+ 'Add   Del   Quit',
+ 'S_ScanAdd','S_ScanDel','S_ScanExit','S_ScanExit', 
  S_ScanAccept_enter,No_State,No_State));
 
 state_array.push(new StateGUI('S_ScanAdd',0,
@@ -1179,8 +1202,15 @@ state_array.push(new StateGUI('S_ScanDel',0,
 state_array.push(new StateGUI('S_ScanMissing',0,
  'Item not found  ',
  'Rescan      Quit',
- 'S_ScanReady',STATE_NOP,'S_Follow_Weight','S_Follow_Weight', 
+ 'S_ScanReady',STATE_NOP,'S_ScanExit','S_ScanExit', 
  No_State,No_State,No_State));
+
+state_array.push(new StateGUI('S_ScanExit',0,
+ '',
+ '',
+ STATE_NOP,STATE_NOP,STATE_NOP,STATE_NOP,
+ S_ScanExit_enter,No_State,No_State));
+
 
 // Help!
 
@@ -1406,6 +1436,7 @@ function goto_state(select_state_name) {
 	}
 	
 	// assert new state
+	state_prev= state_now;
 	state_now = next_state;
 
 	// execute any state prolog function
@@ -1664,7 +1695,7 @@ function run_loop() {
 	scan_scanner();
 	if (('S_ScanReady' != state_array[state_now].state_name) && (scanner_input != "")) {
 		// direct to scan fetch
-		goto_state('S_ScanReady');
+		goto_state('S_ScanInit');
 	}
 }
 
@@ -1739,3 +1770,8 @@ setup_init();
 
 // Scan the non-event I/O every 1/4 second
 setInterval(fmc_loop, 250);
+
+
+
+
+
