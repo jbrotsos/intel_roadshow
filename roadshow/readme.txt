@@ -4,7 +4,7 @@ Readme for the Edison and "Follow-Me-Cart"
 Table of Contents:
 
   1. Preparing the Edison
-  2. Preparing Cloud Service
+  2. Preparing the Cloud Service
   3. Preparing the Follow Me Cart
   4. Creating a custom Edison Image
 
