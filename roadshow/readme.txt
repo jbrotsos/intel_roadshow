@@ -27,9 +27,14 @@ needed for the Follow Cart and is therefore very preferred,
 
   https://software.intel.com/en-us/flashing-your-firmware-edison
   
-NOTE: the "manual instructions for flashing that worked for 2,0 does not work
-for 2.1 (at least not for me), so you will definitely want to use the new
-firmware installer tool as per the Intel instructions.
+NOTE: the 'reboot ota' method for flashing that worked for 2.0 does not work
+for 2.1 (cf [1]), so you will definitely want to use the new firmware
+installer tool as per the Intel instructions. The flashall.sh method is
+reported to work on Vincent's machine (Fedora), just remember to run the
+script with sudo, cf [2].
+
+[1] https://communities.intel.com/message/316168
+[2] https://communities.intel.com/message/317683#317683).
   
 Here is the link the current Edison image:
 
